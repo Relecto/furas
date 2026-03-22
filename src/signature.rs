@@ -1,3 +1,4 @@
+use pyo3::prelude::*;
 use std::sync::OnceLock;
 use std::{collections::HashMap, str::FromStr};
 
@@ -9,7 +10,7 @@ use itertools::Itertools;
 
 use crate::utils::{self, index_in_parent};
 
-use crate::math::{softmax_diff};
+use crate::math::softmax_diff;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum AttrValue {
@@ -17,6 +18,7 @@ pub enum AttrValue {
     List(Vec<String>),
 }
 
+#[pyclass]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Signature {
     pub tag_name: String,
@@ -28,18 +30,20 @@ pub struct Signature {
     pub regex: Option<String>,
     pub weights: HashMap<String, f64>,
     pub meta: HashMap<String, String>,
- 
+
     #[serde(skip_serializing, skip_deserializing)]
     compiled_regex: OnceLock<Option<Regex>>,
 }
 
 impl Signature {
     pub fn get_regex(&self) -> Option<&Regex> {
-        self.compiled_regex.get_or_init(|| {
-            self.regex.as_ref()?;
+        self.compiled_regex
+            .get_or_init(|| {
+                self.regex.as_ref()?;
 
-            Regex::new(self.regex.as_ref().unwrap()).ok()
-        }).as_ref()
+                Regex::new(self.regex.as_ref().unwrap()).ok()
+            })
+            .as_ref()
     }
 }
 
@@ -63,18 +67,12 @@ pub fn compute_signature(el: ElementRef) -> Signature {
         attrs: el
             .value()
             .attrs()
-            .map(|(k, v)| (
-                k.to_string(), 
-                AttrValue::List(normalise_attr_value(v))
-            ))
+            .map(|(k, v)| (k.to_string(), AttrValue::List(normalise_attr_value(v))))
             .collect(),
-        depth: { // scraper adds a parent "document" node, so let's strip it.
+        depth: {
+            // scraper adds a parent "document" node, so let's strip it.
             let anc_count = el.ancestors().count() as u32;
-            if anc_count == 0 {
-                0
-            } else {
-                anc_count - 1
-            }
+            if anc_count == 0 { 0 } else { anc_count - 1 }
         },
         has_children: el.has_children(),
         index_in_parent: index_in_parent(el) as u32,
@@ -116,12 +114,12 @@ pub fn compare_signature(target: &Signature, candidate: ElementRef) -> f64 {
     for (attr, value) in &target.attrs {
         let expected_values = match value {
             AttrValue::Signle(s) => &vec![s.clone()],
-            AttrValue::List(v) => v
+            AttrValue::List(v) => v,
         };
-        
+
         let attr_values = match candidate.attr(attr) {
             None => vec![],
-            Some(val) => normalise_attr_value(val)
+            Some(val) => normalise_attr_value(val),
         };
 
         for expected_val in expected_values {
@@ -138,16 +136,18 @@ pub fn compare_signature(target: &Signature, candidate: ElementRef) -> f64 {
 
     // tree depth score
     let depth_diff = u32::abs_diff(target.depth, candidate_signature.depth);
-    let depth_score = f64::clamp(1.0 - (depth_diff as f64 * 0.2), 0.0, 1.0) ;
-    scores.push((
-        depth_score, *target.weights.get("depth").unwrap_or(&1.0)
-    ));
-
+    let depth_score = f64::clamp(1.0 - (depth_diff as f64 * 0.2), 0.0, 1.0);
+    scores.push((depth_score, *target.weights.get("depth").unwrap_or(&1.0)));
 
     // text len score
-    let text_len_ratio = softmax_diff(0.2, target.text_len as f64, candidate_signature.text_len as f64);
+    let text_len_ratio = softmax_diff(
+        0.2,
+        target.text_len as f64,
+        candidate_signature.text_len as f64,
+    );
     scores.push((
-        text_len_ratio, *target.weights.get("text_len").unwrap_or(&1.0)
+        text_len_ratio,
+        *target.weights.get("text_len").unwrap_or(&1.0),
     ));
     // println!("text len a b {} {}", target.text_len, candidate_signature.text_len);
     // println!("text len ratio {}", text_len_ratio);
@@ -168,7 +168,10 @@ pub fn compare_signature(target: &Signature, candidate: ElementRef) -> f64 {
 #[derive(Debug)]
 pub struct ScoredElement<'a>(pub f64, pub ElementRef<'a>);
 
-pub fn find_signature_matches<'a>(root: ElementRef<'a>, signatures: &[(&'a str, &'a Signature)]) -> HashMap<&'a str, Vec<ScoredElement<'a>>> {
+pub fn find_signature_matches<'a>(
+    root: ElementRef<'a>,
+    signatures: &[(&'a str, &'a Signature)],
+) -> HashMap<&'a str, Vec<ScoredElement<'a>>> {
     let mut matches = HashMap::with_capacity(signatures.len());
 
     for element in root.descendent_elements() {
@@ -176,26 +179,38 @@ pub fn find_signature_matches<'a>(root: ElementRef<'a>, signatures: &[(&'a str, 
             let score = compare_signature(signature, element);
 
             if score >= 0.75 {
-                matches.entry(*field).or_insert(Vec::new()).push(ScoredElement(score, element));
+                matches
+                    .entry(*field)
+                    .or_insert(Vec::new())
+                    .push(ScoredElement(score, element));
             }
-
         }
     }
 
     matches
 }
 
-pub fn find_best_signature_matches<'a>(root: ElementRef<'a>, signatures: &[(&'a str, &'a Signature)]) -> HashMap<&'a str, ScoredElement<'a>> {
+pub fn find_best_signature_matches<'a>(
+    root: ElementRef<'a>,
+    signatures: &[(&'a str, &'a Signature)],
+) -> HashMap<&'a str, ScoredElement<'a>> {
     let mut matches = HashMap::with_capacity(signatures.len());
 
     for element in root.descendent_elements() {
         for (field, signature) in signatures.iter() {
             let score = compare_signature(signature, element);
-            matches.entry(*field)
-                .and_modify(|e: &mut ScoredElement<'_>| if score > e.0 { e.0 = score; e.1 = element })
+            matches
+                .entry(*field)
+                .and_modify(|e: &mut ScoredElement<'_>| {
+                    if score > e.0 {
+                        e.0 = score;
+                        e.1 = element
+                    }
+                })
                 .or_insert(ScoredElement(score, element));
         }
     }
 
     matches
 }
+

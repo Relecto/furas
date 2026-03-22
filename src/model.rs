@@ -1,4 +1,5 @@
 // use core::fmt;d
+use pyo3::prelude::*;
 use std::collections::HashMap;
 
 use itertools::Itertools;
@@ -32,15 +33,16 @@ pub struct Model {
     /// Signature of lowest common ancestor of all elements
     pub group_signature: Signature,
 
-    /// Signatures of all fields of this model    
+    /// Signatures of all fields of this model
     pub field_signatures: HashMap<String, FieldSignature>,
 }
 
+#[derive(Clone)]
 pub enum FieldSelector {
     Selector(String),
     Submodel(FieldSelectors),
 }
-type FieldSelectors = HashMap<String, FieldSelector>;
+pub type FieldSelectors = HashMap<String, FieldSelector>;
 
 pub fn generate_model_str(html: &str, selectors: &FieldSelectors) -> Result<Model, String> {
     let document = Html::parse_document(html);
