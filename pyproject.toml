@@ -11,3 +11,9 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
+
+[[tool.uv.index]]
+name = "flea girlab"
+url = "https://gitlab.com/api/v4/projects/60534972/packages/pypi"
+publish-url = "https://gitlab.com/api/v4/projects/60534972/packages/pypi"
+explicit = true
