@@ -15,7 +15,7 @@ classifiers = [
 dynamic = ["version"]
 
 [[tool.uv.index]]
-name = "flea-gitlab"
-url = "https://gitlab.com/api/v4/projects/60534972/packages/pypi"
-publish-url = "https://gitlab.com/api/v4/projects/60534972/packages/pypi"
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
 explicit = true
