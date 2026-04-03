@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use std::fmt::Display;
 use std::sync::OnceLock;
 use std::{collections::HashMap, str::FromStr};
 
@@ -12,27 +13,58 @@ use crate::utils::{self, index_in_parent};
 
 use crate::math::softmax_diff;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[pyclass(from_py_object)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum AttrValue {
     Signle(String),
     List(Vec<String>),
 }
 
-#[pyclass]
-#[derive(Serialize, Deserialize, Debug)]
+#[pyclass(from_py_object, str)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Signature {
+    #[pyo3(get)]
     pub tag_name: String,
+    #[pyo3(get)]
     pub attrs: HashMap<String, AttrValue>,
+    #[pyo3(get)]
     pub depth: u32,
+    #[pyo3(get)]
     pub has_children: bool,
+    #[pyo3(get)]
     pub index_in_parent: u32,
+    #[pyo3(get)]
     pub text_len: u32,
+    #[pyo3(get)]
     pub regex: Option<String>,
+    #[pyo3(get, set)] // allow to modify weights
     pub weights: HashMap<String, f64>,
+    #[pyo3(get)]
     pub meta: HashMap<String, String>,
 
     #[serde(skip_serializing, skip_deserializing)]
     compiled_regex: OnceLock<Option<Regex>>,
+}
+
+impl Display for Signature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Signature <{} {}>",
+            self.tag_name,
+            self.attrs
+                .iter()
+                .map(|(k, v)| format!(
+                    "{}=\"{}\"",
+                    k,
+                    match v {
+                        AttrValue::Signle(s) => s.to_string(),
+                        AttrValue::List(v) => v.iter().join(" "),
+                    }
+                ))
+                .join(" ")
+        )
+    }
 }
 
 impl Signature {
@@ -202,10 +234,16 @@ pub fn find_best_signature_matches<'a>(
             matches
                 .entry(*field)
                 .and_modify(|e: &mut ScoredElement<'_>| {
-                    if score > e.0 {
+                    // if scores are equal, prefer the deepest element
+                    if (score - e.0).abs() < f64::EPSILON {
+                        if element.ancestors().count() < e.1.ancestors().count() {
+                            e.0 = score;
+                            e.1 = element;
+                        };
+                    } else if score > e.0 {
                         e.0 = score;
                         e.1 = element
-                    }
+                    };
                 })
                 .or_insert(ScoredElement(score, element));
         }
@@ -213,4 +251,3 @@ pub fn find_best_signature_matches<'a>(
 
     matches
 }
-

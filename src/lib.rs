@@ -8,35 +8,37 @@ pub mod utils;
 #[pymodule]
 mod furas {
 
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fmt::Display};
 
-    use crate::model::{FieldSelector, FieldSelectors, MatchValue, Model, extract_fields, generate_model_str};
+    use crate::model::{FieldSelectors, MatchValue, extract_fields, generate_model_str};
     pub use crate::signature::*;
+    use itertools::Itertools;
     use pyo3::{
-        PyTypeInfo,
         exceptions::{PyTypeError, PyValueError},
         prelude::*,
-        types::{PyBytes, PyDict, PyList, PyNone, PyString, PyType},
+        types::{PyDict, PyList, PyNone},
     };
     use scraper::Html;
 
-    #[pyclass]
-    pub struct FurasModel(Model);
 
+    #[pymodule_export]
+    use crate::model::{FieldSpec, Model, NormalisationOptions};
+    // #[pyclass]
+    // pub struct FurasModel(Model);
     #[pymethods]
-    impl FurasModel {
+    impl Model {
         #[staticmethod]
-        fn from_json<'py>(py: Python<'py>, json: &str) -> PyResult<Bound<'py, FurasModel>> {
+        fn from_json<'py>(py: Python<'py>, json: &str) -> PyResult<Bound<'py, Model>> {
             let parsed = serde_json::from_str::<'_, Model>(json);
 
             match parsed {
-                Ok(model) => Ok(Py::new(py, FurasModel::from(model))?.into_bound(py)),
+                Ok(model) => Ok(Py::new(py, Model::from(model))?.into_bound(py)),
                 Err(err) => Err(PyValueError::new_err(err.to_string())),
             }
         }
 
         fn to_json<'py>(&self) -> PyResult<String> {
-            let serialised = serde_json::to_string::<Model>(&self.0);
+            let serialised = serde_json::to_string::<Model>(&self);
             match serialised {
                 Ok(s) => Ok(s),
                 Err(err) => Err(PyValueError::new_err(err.to_string())),
@@ -44,13 +46,13 @@ mod furas {
         }
     }
 
-    impl From<Model> for FurasModel {
-        fn from(m: Model) -> Self {
-            FurasModel(m)
-        }
-    }
+    // impl From<Model> for Model {
+    //     fn from(m: Model) -> Self {
+    //         FurasModel(m)
+    //     }
+    // }
 
-    #[pyclass]
+    #[pyclass(str)]
     pub struct ExtractedEl {
         #[pyo3(get)]
         tag: String,
@@ -58,6 +60,12 @@ mod furas {
         attrs: Py<PyDict>,
         #[pyo3(get)]
         text: Vec<String>,
+    }
+
+    impl Display for ExtractedEl {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "<{} {}>{}</>", self.tag, self.attrs, self.text.iter().join(" "))
+        }
     }
 
     fn extract_val_to_py<'p>(py: Python<'p>, match_val: &MatchValue) -> Bound<'p, PyAny> {
@@ -104,13 +112,20 @@ mod furas {
         selectors
             .iter()
             .map(|(k, v)| {
-                if let Ok(string) = v.extract::<String>() {
-                    PyResult::Ok((k.clone(), FieldSelector::Selector(string)))
+                if let Ok(spec) = v.extract::<FieldSpec>() {
+                    PyResult::Ok((k.clone(), spec))
+                } else if let Ok(string) = v.extract::<String>() {
+                    PyResult::Ok((k.clone(), FieldSpec::Field {
+                        selector: string,
+                        regex: None
+                    } ))
                 } else if let Ok(dict) = v.extract::<HashMap<String, Bound<'_, PyAny>>>() {
-                    PyResult::Ok((k.clone(), FieldSelector::Submodel(to_furas_field_selectors(dict)?)))
+                    PyResult::Ok((k.clone(), FieldSpec::Submodel {
+                        fields: to_furas_field_selectors(dict)?,
+                    }))
                 } else {
                     PyResult::Err(PyTypeError::new_err(format!(
-                        "Expected string or dict, found {}",
+                        "Expected str,  dict or FieldSpec, found {}",
                         v.get_type().to_string()
                     )))
                 }
@@ -119,31 +134,32 @@ mod furas {
     }
 
     #[pyfunction]
+    #[pyo3(signature = (html: "str", selectors: "dict[str, FieldSpec | str]"))]
     fn generate_model<'p>(
         py: Python<'p>,
         html: &str,
         selectors: HashMap<String, Bound<'_, PyAny>>,
-    ) -> PyResult<Bound<'p, FurasModel>> {
+    ) -> PyResult<Bound<'p, Model>> {
         let res = generate_model_str(html, &to_furas_field_selectors(selectors)?);
         if let Err(err) = res {
             return Err(PyValueError::new_err(err));
         }
 
-        let model: FurasModel = res.unwrap().into();
+        let model: Model = res.unwrap().into();
 
         Ok(Py::new(py, model).unwrap().into_bound(py))
     }
 
     #[pyfunction]
-    #[pyo3(signature = (model: "PyModel", html: "str | bytes") -> "dict[ExtractedEl | dict[str, ExtractedEl] | list[ExtractedEl]]")]
+    #[pyo3(signature = (model: "Model", html: "str | bytes") -> "dict[str, ExtractedEl | dict[str, ExtractedEl] | list[ExtractedEl]]")]
     fn extract<'p>(
         py: Python<'p>,
-        model: PyRef<FurasModel>,
+        model: PyRef<Model>,
         html: &str,
     ) -> PyResult<Bound<'p, PyAny>> {
         let doc = Html::parse_document(html);
 
-        let res = extract_fields(&model.0, &doc);
+        let res = extract_fields(&model, &doc);
         if let Err(e) = res {
             return Err(PyValueError::new_err(e));
         }

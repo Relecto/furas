@@ -1,0 +1,10 @@
+[
+  {
+    "adapter": "CodeLLDB",
+    "label": "debug pyo3",
+    "request": "launch",
+    "sourceLanguages": ["rust"],
+    "program": "/Users/relecto/codebase/flea/furas/.venv/bin/python3",
+    "args": [".scratch/test.py"]
+  }
+]

@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 itertools = "0.14.0"
 nucleo-matcher = "0.3.1"
 pyo3 = { version ="0.28.2", features = [ "experimental-inspect" ] }
+pyo3-introspection = "0.28.2"
 rapidfuzz = "0.5.0"
 regex = "1.12.3"
 scraper = { version = "0.26.0", features = [ "atomic" ] }

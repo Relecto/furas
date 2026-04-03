@@ -14,35 +14,63 @@ use crate::{
     utils::lca,
 };
 
-#[derive(Serialize, Deserialize, Debug)]
+#[pyclass(from_py_object)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NormalisationOptions {
+    #[pyo3(get, set)]
     unwrap_text_tags: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[pyclass(from_py_object)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FieldSignature {
     Signature(Signature),
     Submodel(Model),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[pyclass(from_py_object)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Model {
     /// Options for normalising html
+    #[pyo3(get, set)]
     pub normalisation: NormalisationOptions,
 
     /// Signature of lowest common ancestor of all elements
+    #[pyo3(get, set)]
     pub group_signature: Signature,
 
     /// Signatures of all fields of this model
+    #[pyo3(get, set)]
     pub field_signatures: HashMap<String, FieldSignature>,
 }
 
 #[derive(Clone)]
+#[pyclass(from_py_object)]
 pub enum FieldSelector {
     Selector(String),
     Submodel(FieldSelectors),
 }
-pub type FieldSelectors = HashMap<String, FieldSelector>;
+
+impl From<String> for FieldSelector {
+    fn from(s: String) -> Self {
+        FieldSelector::Selector(s)
+    }
+}
+
+#[derive(Clone)]
+#[pyclass(from_py_object)]
+pub enum FieldSpec {
+    #[pyo3(constructor=(selector, regex=None))]
+    Field {
+        selector: String,
+        regex: Option<String>
+    },
+    Submodel {
+        fields: FieldSelectors,
+    }
+}
+
+pub type FieldSelectors = HashMap<String, FieldSpec>;
 
 pub fn generate_model_str(html: &str, selectors: &FieldSelectors) -> Result<Model, String> {
     let document = Html::parse_document(html);
@@ -56,27 +84,32 @@ pub fn generate_model(root: ElementRef, selectors: &FieldSelectors) -> Result<Mo
     let mut signatures = HashMap::new();
 
     // compute signatures for all elements
-    for (field, field_selector) in selectors.iter() {
-        let sig: FieldSignature = match field_selector {
-            FieldSelector::Selector(s) => {
-                let selector = Selector::parse(s);
-                if let Err(err) = selector {
+    for (field, spec) in selectors.iter() {
+        let sig: FieldSignature = match spec {
+            FieldSpec::Field { selector, regex } => {
+                let sel = Selector::parse(selector);
+                if let Err(err) = sel {
                     return Err(err.to_string());
                 }
 
-                let el = root.select(&selector.unwrap()).next();
+                let el = root.select(&sel.unwrap()).next();
 
                 if el.is_none() {
                     return Err(format!(
                         "Could not find element for field {} using selector {}",
-                        field, s
+                        field, selector
                     ));
                 }
 
-                FieldSignature::Signature(compute_signature(el.unwrap()))
+                let mut s = compute_signature(el.unwrap());
+
+                if let Some(r) = regex {
+                    s.regex = Some(r.to_string());
+                }
+                FieldSignature::Signature(s)
             }
-            FieldSelector::Submodel(selectors) => {
-                let m = generate_model(root, selectors);
+            FieldSpec::Submodel { fields } => {
+                let m = generate_model(root, fields);
                 if let Err(err) = m {
                     return Err(err);
                 }
@@ -129,20 +162,20 @@ pub fn generate_model(root: ElementRef, selectors: &FieldSelectors) -> Result<Mo
 pub enum MatchValue<'a> {
     Element(ElementRef<'a>),
     Group(HashMap<String, Option<MatchValue<'a>>>),
-    List(Vec<MatchValue<'a>>)
+    List(Vec<MatchValue<'a>>),
 }
 
 #[derive(Debug)]
 pub struct GroupScore {
     pub score: f64,
-    pub fields: HashMap<String, Option<MatchScore>>
+    pub fields: HashMap<String, Option<MatchScore>>,
 }
 
 #[derive(Debug)]
 pub enum MatchScore {
     Element(f64),
     Group(GroupScore),
-    List(Vec<MatchScore>)
+    List(Vec<MatchScore>),
 }
 
 // #[derive(Debug)]
@@ -160,10 +193,7 @@ pub struct ExtractResult<'a> {
     pub data: Vec<MatchValue<'a>>,
 }
 
-pub fn extract_fields<'a, 'b>(
-    model: &'b Model,
-    html: &'a Html,
-) -> Result<ExtractResult<'a>, String>
+pub fn extract_fields<'a, 'b>(model: &'b Model, html: &'a Html) -> Result<ExtractResult<'a>, String>
 where
     'b: 'a,
 {
@@ -203,18 +233,14 @@ where
             .map(|(f, m)| (*f, extract_fields(m, html).ok()))
             .collect_vec();
 
-        let mut all_fields: HashMap<String, Option<MatchValue>> = HashMap::with_capacity(fields.len() + model_fields.len());
-        let mut all_scores: HashMap<String, Option<MatchScore>> = HashMap::with_capacity(fields.len() + model_fields.len());
+        let mut all_fields: HashMap<String, Option<MatchValue>> =
+            HashMap::with_capacity(fields.len() + model_fields.len());
+        let mut all_scores: HashMap<String, Option<MatchScore>> =
+            HashMap::with_capacity(fields.len() + model_fields.len());
 
         for (f, scored_el) in fields {
-            all_fields.insert(
-                f.to_string(),
-                Some(MatchValue::Element(scored_el.1)),
-            );
-            all_scores.insert(
-                f.to_string(),
-                Some(MatchScore::Element(scored_el.0)),
-            );
+            all_fields.insert(f.to_string(), Some(MatchValue::Element(scored_el.1)));
+            all_scores.insert(f.to_string(), Some(MatchScore::Element(scored_el.0)));
         }
 
         for (f, result) in model_fields {
@@ -222,7 +248,7 @@ where
                 Some(res) => {
                     all_fields.insert(f.to_string(), Some(MatchValue::List(res.data)));
                     all_scores.insert(f.to_string(), Some(MatchScore::List(res.scores)));
-                },
+                }
                 None => {
                     all_fields.insert(f.to_string(), None);
                     all_scores.insert(f.to_string(), None);
@@ -230,8 +256,14 @@ where
             };
         }
         group_fields.push(MatchValue::Group(all_fields));
-        group_scores.push(MatchScore::Group(GroupScore { score: *group_score, fields: all_scores }));
+        group_scores.push(MatchScore::Group(GroupScore {
+            score: *group_score,
+            fields: all_scores,
+        }));
     }
 
-    Ok(ExtractResult { scores: (group_scores), data: (group_fields) })
+    Ok(ExtractResult {
+        scores: (group_scores),
+        data: (group_fields),
+    })
 }
